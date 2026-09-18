@@ -44,7 +44,7 @@ func (f *CommentFeedAction) PostComment(ctx context.Context, feedID, xsecToken, 
 		return fmt.Errorf("未找到评论输入框，该帖子可能不支持评论或网页端不可访问: %w", err)
 	}
 
-	if err := humanize.Click(elem); err != nil {
+	if err := safeClick(elem); err != nil {
 		logrus.Warnf("Failed to click comment input box: %v", err)
 		return fmt.Errorf("无法点击评论输入框: %w", err)
 	}
@@ -69,7 +69,7 @@ func (f *CommentFeedAction) PostComment(ctx context.Context, feedID, xsecToken, 
 		return fmt.Errorf("未找到提交按钮: %w", err)
 	}
 
-	if err := humanize.Click(submitButton); err != nil {
+	if err := safeClick(submitButton); err != nil {
 		logrus.Warnf("Failed to click submit button: %v", err)
 		return fmt.Errorf("无法点击提交按钮: %w", err)
 	}
@@ -149,7 +149,7 @@ func (f *CommentFeedAction) ReplyToComment(ctx context.Context, feedID, xsecToke
 		return fmt.Errorf("无法找到回复按钮: %w", err)
 	}
 
-	if err := humanize.Click(replyBtn); err != nil {
+	if err := safeClick(replyBtn); err != nil {
 		return fmt.Errorf("点击回复按钮失败: %w", err)
 	}
 
@@ -174,7 +174,7 @@ func (f *CommentFeedAction) ReplyToComment(ctx context.Context, feedID, xsecToke
 		return fmt.Errorf("无法找到提交按钮: %w", err)
 	}
 
-	if err := humanize.Click(submitBtn); err != nil {
+	if err := safeClick(submitBtn); err != nil {
 		return fmt.Errorf("点击提交按钮失败: %w", err)
 	}
 
@@ -293,4 +293,28 @@ func lookupComment(page *rod.Page, commentID, userID string) *rod.Element {
 		}
 	}
 	return nil
+}
+
+
+// safeClick 是 humanize.Click 的安全版本（PATCHED 2026-09-18）。
+//
+// 背景：humanize.Click 首步 elem.WaitInteractable() 会无限轮询元素可交互状态。
+// 当元素被浮层遮挡或滚动出视口时，会一直判定「不可交互」直到 context 超时
+// （与 Issue #837 的「回点标题输入框失败」同源）。
+//
+// 策略：① 先 ScrollIntoView 消除滚动出视口的误判
+//       ② 用 ClickNoWait 绕过遮挡重试
+//       ③ 都失败时回退到原始 humanize.Click（保留原有行为）
+func safeClick(elem *rod.Element) error {
+	if err := elem.ScrollIntoView(); err != nil {
+		logrus.Debugf("safeClick ScrollIntoView 失败（继续尝试）: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if err := humanize.ClickNoWait(elem); err == nil {
+		return nil
+	} else {
+		logrus.Warnf("safeClick ClickNoWait 失败，回退 humanize.Click: %v", err)
+	}
+	return humanize.Click(elem)
 }
